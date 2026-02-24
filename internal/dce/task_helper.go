@@ -13,14 +13,14 @@ import (
 )
 
 // BuildTaskList creates tasks based on user input, file matching, and function extraction.
-func BuildTaskList(input string) ([]contextpkg.Task, []string, error) {
+func BuildTaskList(input string) ([]contextpkg.Task, map[string]string, []string, error) {
 	var logs []string
 	logs = append(logs, fmt.Sprintf("Building task list from input: %q", input))
 
 	// 1. Retrieve all tracked files.
 	out, err := utils.ExecGit("ls-files")
 	if err != nil {
-		return nil, logs, fmt.Errorf("failed to execute git ls-files: %w", err)
+		return nil, nil, logs, fmt.Errorf("failed to execute git ls-files: %w", err)
 	}
 	trackedFiles := utils.SplitLines(out)
 	logs = append(logs, fmt.Sprintf("Found %d tracked files", len(trackedFiles)))
@@ -36,7 +36,7 @@ func BuildTaskList(input string) ([]contextpkg.Task, []string, error) {
 			Notes:       []string{"No direct file matches found. Add manually."},
 		}
 		logs = append(logs, "No file matches found - created catch-all task")
-		return []contextpkg.Task{task}, logs, nil
+		return []contextpkg.Task{task}, nil, logs, nil
 	}
 
 	// 4. Extract functions from each matched file.
@@ -51,6 +51,14 @@ func BuildTaskList(input string) ([]contextpkg.Task, []string, error) {
 			logs = append(logs, fmt.Sprintf("No functions found in %s", f))
 		}
 	}
+	// 4b. Read file contents for snapshots
+	snapshots := make(map[string]string)
+	for _, f := range matchedFiles {
+		content, err := os.ReadFile(f)
+		if err == nil {
+			snapshots[f] = string(content)
+		}
+	}
 
 	// 5. Create a consolidated task.
 	task := contextpkg.Task{
@@ -62,7 +70,7 @@ func BuildTaskList(input string) ([]contextpkg.Task, []string, error) {
 	}
 	logs = append(logs, fmt.Sprintf("Created task with %d files and %d functions", len(matchedFiles), len(allFunctions)))
 
-	return []contextpkg.Task{task}, logs, nil
+	return []contextpkg.Task{task}, snapshots, logs, nil
 }
 
 // matchFilesByKeywords returns files from allFiles that contain any keyword from userInput.
@@ -78,6 +86,7 @@ func matchFilesByKeywords(allFiles []string, userInput string) []string {
 			}
 		}
 	}
+
 	return matched
 }
 
@@ -98,6 +107,7 @@ func extractFunctionsFromFile(filePath, pattern string) []string {
 			funcs = append(funcs, m[2])
 		}
 	}
+
 	return funcs
 }
 

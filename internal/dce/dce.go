@@ -13,7 +13,7 @@ import (
 type DCE interface {
 	Activate(task string) error
 	Deactivate(conversationID string) error
-	BuildTaskList(input string) ([]contextpkg.Task, []string, error)
+	BuildTaskList(string) ([]contextpkg.Task, map[string]string, []string, error)
 	FilterProjectData(tasks []contextpkg.Task) ([]FilteredData, []string, error)
 	AugmentContext(ctx []contextpkg.Message, filteredData []FilteredData) []contextpkg.Message
 }
@@ -36,30 +36,25 @@ func NewDCE() DCE {
 func (d *DefaultDCE) Activate(task string) error {
 	fmt.Printf("[DCE] Activating with task: %q\n", task)
 
-	// 1. Build initial task list from user input
-	tasks, logs, err := d.BuildTaskList(task)
+	tasks, snapshots, logs, err := d.BuildTaskList(task)
 	if err != nil {
 		return fmt.Errorf("failed to build task list: %w", err)
 	}
 
-	// 2. Log the build process details
 	for _, logMsg := range logs {
 		fmt.Printf("[DCE] %s\n", logMsg)
 	}
 
-	// 3. Generate a conversation ID if needed
 	conversationID := contextpkg.GenerateConversationID("dce")
-
-	// 4. Create LittleGuy instance with the task list
 	littleguy := NewLittleGuy(conversationID, tasks)
 
-	// 5. Start background monitoring
-	littleguy.StartMonitoring()
+	for filePath, content := range snapshots {
+		littleguy.AddCodeSnippet(filePath, content)
+	}
 
-	// 6. Store the DCE context
+	littleguy.StartMonitoring()
 	GetDCEContextManager().AddContext(conversationID, littleguy)
 
-	// 7. Final activation message with task count
 	fmt.Printf("[DCE] Activated with %d initial tasks\n", len(tasks))
 	fmt.Printf("[DCE] Dynamic Context Engine activated. Use '/tasks' to view current tasks.\n")
 	return nil
@@ -72,7 +67,7 @@ func (d *DefaultDCE) Deactivate(conversationID string) error {
 }
 
 // BuildTaskList generates tasks based on user input by delegating to task_helper.
-func (d *DefaultDCE) BuildTaskList(input string) ([]contextpkg.Task, []string, error) {
+func (d *DefaultDCE) BuildTaskList(input string) ([]contextpkg.Task, map[string]string, []string, error) {
 	return BuildTaskList(input)
 }
 
