@@ -15,7 +15,7 @@ func TestBuildTaskListWithMatchingFiles(t *testing.T) {
 	defer test.CleanupTestRepository(t, repoPath)
 
 	// Build task list for a description that should match files
-	tasks, logs, err := dce.BuildTaskList("context package")
+	tasks, _, logs, err := dce.BuildTaskList("context package")
 	if err != nil {
 		t.Fatalf("BuildTaskList failed: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestBuildTaskListWithNoMatchingFiles(t *testing.T) {
 	defer test.CleanupTestRepository(t, repoPath)
 
 	// Build task list for a description that shouldn't match files
-	tasks, logs, err := dce.BuildTaskList("nonexistent feature")
+	tasks, _, logs, err := dce.BuildTaskList("nonexistent feature")
 	if err != nil {
 		t.Fatalf("BuildTaskList failed: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBuildTaskListWithFunctionExtraction(t *testing.T) {
 	defer test.CleanupTestRepository(t, repoPath)
 
 	// Build task list for a description that should match a file with functions
-	tasks, _, err := dce.BuildTaskList("cmd context")
+	tasks, _, _, err := dce.BuildTaskList("cmd context")
 	if err != nil {
 		t.Fatalf("BuildTaskList failed: %v", err)
 	}

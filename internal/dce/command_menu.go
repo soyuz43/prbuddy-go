@@ -93,7 +93,7 @@ func handleAddCommand(input string, littleguy *LittleGuy) {
 	color.New(color.FgCyan).Fprintf(outputWriter, "\n[Add] Building task from description: %q\n", taskDescription)
 
 	// Build task list from the description
-	tasks, logs, err := BuildTaskList(taskDescription)
+	tasks, snapshots, logs, err := BuildTaskList(taskDescription)
 	if err != nil {
 		color.New(color.FgRed).Fprintf(outputWriter, "[X] Failed to build task list: %v\n", err)
 		return
@@ -107,6 +107,10 @@ func handleAddCommand(input string, littleguy *LittleGuy) {
 	// Add the new tasks to the current task list
 	littleguy.UpdateTaskList(tasks)
 
+	// Feed snapshots into LittleGuy
+	for filePath, content := range snapshots {
+		littleguy.AddCodeSnippet(filePath, content)
+	}
 	// Provide feedback
 	color.New(color.FgGreen).Fprintf(outputWriter, "\n[Add] Successfully added %d task(s) to the task list\n", len(tasks))
 

@@ -260,7 +260,7 @@ func HandleDCERequest(conversationID, input string) (string, error) {
 	defer dceInstance.Deactivate(conversationID)
 
 	// Build task list
-	taskList, buildLogs, err := dceInstance.BuildTaskList(input)
+	taskList, _, buildLogs, err := dceInstance.BuildTaskList(input)
 	if err != nil {
 		return "", fmt.Errorf("failed to build task list: %w", err)
 	}
@@ -444,7 +444,7 @@ These are the git diffs for the repository:
 	dceInstance := dce.NewDCE()
 
 	// 6. Build task list using a descriptive input that captures our intent
-	taskList, buildLogs, err := dceInstance.BuildTaskList("Summarizing recent changes and providing context-aware summary of current development progress")
+	taskList, _, buildLogs, err := dceInstance.BuildTaskList("Summarizing recent changes and providing context-aware summary of current development progress")
 	if err != nil {
 		return "", fmt.Errorf("failed to build task list: %w", err)
 	}
