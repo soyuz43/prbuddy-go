@@ -35,7 +35,7 @@ func TestIntegration_FullDCEWorkflow(t *testing.T) {
 		t.Error("Status output missing")
 	}
 
-	// Step 4: Mark task as completed (FIX: Use task 2, not task 1)
+	// Step 4: Mark task as completed (task 2, since task 1 is the initial task)
 	dce.HandleDCECommandMenu("/complete 2", littleguy)
 
 	// Step 5: Verify task was removed
@@ -52,7 +52,7 @@ func TestIntegration_DCEActivationDeactivation(t *testing.T) {
 	// Setup
 	_, littleguy := test.SetupDCEForTesting(t, "Initial task")
 
-	// FIX: Deactivate DCE first since SetupDCEForTesting activates it
+	// Deactivate DCE first since SetupDCEForTesting activates it
 	dce.HandleDCECommandMenu("/dce off", littleguy)
 
 	// Test DCE activation
@@ -92,11 +92,10 @@ func TestIntegration_TaskPrioritization(t *testing.T) {
 	dce.HandleDCECommandMenu("/add Task 2: Feature implementation", littleguy)
 	dce.HandleDCECommandMenu("/add Task 3: Documentation update", littleguy)
 
-	// Verify we have 4 tasks total
+	// Verify we have tasks
 	mockOutput := &MockOutputWriter{Buffer: &bytes.Buffer{}}
 	SetOutputForTests(mockOutput)
 	dce.HandleDCECommandMenu("/tasks", littleguy)
-	t.Logf("Task list: %s", mockOutput.String())
 
 	// Set priorities (offset by 1 to account for initial task)
 	dce.HandleDCECommandMenu("/priority 2 high", littleguy)
@@ -108,9 +107,6 @@ func TestIntegration_TaskPrioritization(t *testing.T) {
 	SetOutputForTests(mockOutput)
 	dce.HandleDCECommandMenu("/priority", littleguy)
 	output := mockOutput.String()
-
-	// Debug output
-	t.Logf("Priority output: %s", output)
 
 	// Verify priority labels are present
 	expectedPriorities := []string{"[High]", "[Medium]", "[Low]"}
@@ -125,29 +121,41 @@ func TestIntegration_CommandAliases(t *testing.T) {
 	// Setup
 	_, littleguy := test.SetupDCEForTesting(t, "Initial task")
 
-	// Test different command aliases
+	// New contract: ANY slash command is handled internally.
+	// Unknown slash commands should print help and return true.
 	testCases := []struct {
 		command     string
 		shouldMatch bool
 	}{
 		{"/task", true},
 		{"/tasks", true},
+		{"/t", true},
 		{"/cmds", true},
 		{"/commands", true},
 		{"/help", true},
-		{"/invalid", false},
+		{"/c", true},
+		{"/invalid", true}, // changed: now handled (prints help)
 	}
 
 	for _, tc := range testCases {
 		t.Run("Command_"+tc.command, func(t *testing.T) {
 			mockOutput := &MockOutputWriter{Buffer: &bytes.Buffer{}}
 			SetOutputForTests(mockOutput)
+
 			result := dce.HandleDCECommandMenu(tc.command, littleguy)
 			if tc.shouldMatch && !result {
 				t.Errorf("Command '%s' should have been handled but wasn't", tc.command)
 			}
 			if !tc.shouldMatch && result {
 				t.Errorf("Command '%s' should not have been handled but was", tc.command)
+			}
+
+			// For unknown commands, ensure we print help (sanity)
+			if tc.command == "/invalid" {
+				out := mockOutput.String()
+				if !strings.Contains(out, "Unrecognized command") && !strings.Contains(out, "Available DCE Commands") {
+					t.Errorf("Expected help output for %q, got: %s", tc.command, out)
+				}
 			}
 		})
 	}
@@ -187,7 +195,12 @@ func TestIntegration_InvalidCommands(t *testing.T) {
 		t.Run("Invalid_"+cmd, func(t *testing.T) {
 			mockOutput := &MockOutputWriter{Buffer: &bytes.Buffer{}}
 			SetOutputForTests(mockOutput)
-			dce.HandleDCECommandMenu(cmd, littleguy)
+
+			handled := dce.HandleDCECommandMenu(cmd, littleguy)
+			if !handled {
+				t.Errorf("Expected invalid slash command %q to be handled internally", cmd)
+			}
+
 			output := mockOutput.String()
 			// Should see some error message (not empty)
 			if output == "" {

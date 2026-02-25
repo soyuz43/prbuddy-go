@@ -81,13 +81,15 @@ func (lg *LittleGuy) StartMonitoring() {
 		for {
 			lg.mutex.RLock()
 			monitoring := lg.monitorStarted
+			interval := lg.pollInterval
 			lg.mutex.RUnlock()
 
 			if !monitoring {
 				return
 			}
 
-			time.Sleep(lg.pollInterval)
+			time.Sleep(interval)
+
 			diffOutput, err := utils.ExecGit("diff", "--unified=0")
 			if err != nil {
 				color.Red("[LittleGuy] Failed to run git diff: %v\n", err)
@@ -102,20 +104,25 @@ func (lg *LittleGuy) StartMonitoring() {
 
 // MonitorInput analyzes user input for function names or file references and updates tasks.
 func (lg *LittleGuy) MonitorInput(input string) {
-	lg.mutex.Lock()
-	defer lg.mutex.Unlock()
+	// Parse input outside lock (cheap, but keeps lock time small).
+	type pendingTask struct {
+		desc  string
+		files []string
+		fns   []string
+		notes []string
+	}
+
+	var toAdd []pendingTask
 
 	lines := strings.Split(input, "\n")
 	for _, line := range lines {
 		if matches := FuncPattern.FindStringSubmatch(line); len(matches) >= 3 {
 			funcName := matches[2]
-			if !lg.hasTaskForFunction(funcName) {
-				lg.tasks = append(lg.tasks, contextpkg.Task{
-					Description: fmt.Sprintf("Detected function: %s", funcName),
-					Functions:   []string{funcName},
-					Notes:       []string{"Consider testing and documenting this function."},
-				})
-			}
+			toAdd = append(toAdd, pendingTask{
+				desc:  fmt.Sprintf("Detected function: %s", funcName),
+				fns:   []string{funcName},
+				notes: []string{"Consider testing and documenting this function."},
+			})
 		}
 
 		if strings.Contains(line, ".go") || strings.Contains(line, ".js") ||
@@ -124,30 +131,55 @@ func (lg *LittleGuy) MonitorInput(input string) {
 			for _, word := range words {
 				if strings.Contains(word, ".go") || strings.Contains(word, ".js") ||
 					strings.Contains(word, ".py") || strings.Contains(word, ".ts") {
-					if !lg.hasTaskForFile(word) {
-						lg.tasks = append(lg.tasks, contextpkg.Task{
-							Description: fmt.Sprintf("Detected file reference: %s", word),
-							Files:       []string{word},
-							Notes:       []string{"Consider adding to code snapshots or tasks."},
-						})
-					}
+					toAdd = append(toAdd, pendingTask{
+						desc:  fmt.Sprintf("Detected file reference: %s", word),
+						files: []string{word},
+						notes: []string{"Consider adding to code snapshots or tasks."},
+					})
 				}
 			}
 		}
 	}
+
+	// Apply under lock (dedupe using existing state).
+	lg.mutex.Lock()
+	for _, p := range toAdd {
+		// If it's a function task, dedupe by function name
+		if len(p.fns) == 1 && p.fns[0] != "" {
+			if lg.hasTaskForFunction(p.fns[0]) {
+				continue
+			}
+		}
+		// If it's a file task, dedupe by file path
+		if len(p.files) == 1 && p.files[0] != "" {
+			if lg.hasTaskForFile(p.files[0]) {
+				continue
+			}
+		}
+
+		lg.tasks = append(lg.tasks, contextpkg.Task{
+			Description: p.desc,
+			Files:       p.files,
+			Functions:   p.fns,
+			Notes:       p.notes,
+		})
+	}
+	lg.mutex.Unlock()
+
+	// Log context AFTER unlocking to avoid deadlock and lock contention.
 	messages := lg.BuildEphemeralContext("")
 	lg.logLLMContext(messages)
 }
 
 // UpdateFromDiff parses Git diff output and updates tasks accordingly.
 func (lg *LittleGuy) UpdateFromDiff(diff string) {
-	lg.mutex.Lock()
-	defer lg.mutex.Unlock()
-
-	// Parse the diff to identify specific changes
+	// CRITICAL:
+	// ParseGitDiff can be expensive (large diffs).
+	// Do it OUTSIDE the lock so /t (which needs RLock) can't stall for seconds/minutes.
 	changes := ParseGitDiff(diff)
 
-	// Process each change to generate appropriate tasks
+	// Apply changes under lock.
+	lg.mutex.Lock()
 	for _, change := range changes {
 		switch change.Type {
 		case "new_file":
@@ -158,8 +190,9 @@ func (lg *LittleGuy) UpdateFromDiff(diff string) {
 			lg.handleDeletedFile(change)
 		}
 	}
+	lg.mutex.Unlock()
 
-	// Log the updated context for debugging
+	// Log the updated context for debugging (no locks held).
 	messages := lg.BuildEphemeralContext("")
 	lg.logLLMContext(messages)
 }
@@ -241,11 +274,13 @@ func (lg *LittleGuy) handleModifiedFile(change GitChange) {
 			})
 		} else if change.Type == "removed" {
 			// Function was removed - mark related tasks as completed
-			for i, task := range lg.tasks {
+			for i := 0; i < len(lg.tasks); i++ {
+				task := lg.tasks[i]
 				for _, fn := range task.Functions {
 					if fn == change.FuncName {
 						lg.completed = append(lg.completed, task)
 						lg.tasks = append(lg.tasks[:i], lg.tasks[i+1:]...)
+						i--
 						break
 					}
 				}
@@ -263,7 +298,7 @@ func (lg *LittleGuy) handleDeletedFile(change GitChange) {
 			if file == change.File {
 				lg.completed = append(lg.completed, task)
 				lg.tasks = append(lg.tasks[:i], lg.tasks[i+1:]...)
-				i-- // Adjust index after removal
+				i--
 				break
 			}
 		}
