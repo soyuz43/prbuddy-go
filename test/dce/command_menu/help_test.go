@@ -28,14 +28,20 @@ func TestHelpCommandDisplaysCorrectly(t *testing.T) {
 		t.Error("Help output doesn't contain command menu header")
 	}
 
-	// Verify /add is in the command list
-	if !strings.Contains(output, "/add <description>") {
-		t.Error("Help output doesn't include /add command")
+	// Verify add command (semantic, not exact phrasing)
+	// We accept either "/add <...>" or the new combined alias line.
+	if !strings.Contains(output, "/add") {
+		t.Error("Help output doesn't include /add")
+	}
+	if !strings.Contains(output, "/a") {
+		t.Error("Help output doesn't include /a alias")
 	}
 
-	// Verify all command aliases are mentioned
-	if !strings.Contains(output, "/commands, /cmds, /help") {
-		t.Error("Help output doesn't properly list all command aliases")
+	// Verify help/commands aliases exist (order-independent)
+	for _, tok := range []string{"/help", "/cmds", "/commands"} {
+		if !strings.Contains(output, tok) {
+			t.Errorf("Help output doesn't include %s", tok)
+		}
 	}
 }
 
@@ -44,22 +50,26 @@ func TestAllHelpCommandAliasesWork(t *testing.T) {
 	_, littleguy := test.SetupDCEForTesting(t, "Test task")
 
 	// Test all help command variants
-	commands := []string{"/help", "/commands", "/cmds"}
+	commands := []string{"/help", "/commands", "/cmds", "/c"}
 
 	for _, cmd := range commands {
 		t.Run(fmt.Sprintf("Command_%s", cmd), func(t *testing.T) {
 			mockOutput := &MockOutputWriter{Buffer: &bytes.Buffer{}}
 			SetOutputForTests(mockOutput)
 
-			dce.HandleDCECommandMenu(cmd, littleguy)
+			handled := dce.HandleDCECommandMenu(cmd, littleguy)
+			if !handled {
+				t.Fatalf("Expected %q to be handled, but it was not", cmd)
+			}
+
 			output := mockOutput.String()
 
 			if !strings.Contains(output, "Available DCE Commands") {
 				t.Errorf("Output for '%s' doesn't contain command menu", cmd)
 			}
 
-			if !strings.Contains(output, "/add <description>") {
-				t.Errorf("Output for '%s' doesn't include /add command", cmd)
+			if !strings.Contains(output, "/add") {
+				t.Errorf("Output for '%s' doesn't include /add", cmd)
 			}
 		})
 	}

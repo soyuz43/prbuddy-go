@@ -184,71 +184,113 @@ func startInteractiveQuickAssist(reader *bufio.Reader) {
 	}
 }
 
-// cmd/what.go or wherever your command handlers are
 func handleDCECommand() {
 	color.Cyan("[PRBuddy-Go] Dynamic Context Engine - Interactive Mode")
-	color.Yellow("Type 'exit' or 'q' to end the session.")
+	color.Yellow("Type 'exit'/'q' or '/exit' to end the session. Use '/bg' or '/suspend' to leave DCE running in background.")
 
-	// Initialize DCE
 	dceInstance := dce.NewDCE()
 	reader := bufio.NewReader(os.Stdin)
 
+	before := snapshotDCEContextIDs()
+
 	color.Green("What are we working on today?")
 	fmt.Print("> ")
-	firstInput, err := reader.ReadString('\n')
-	if err != nil {
-		color.Red("Error reading input: %v", err)
-		return
+
+	var task string
+	for {
+		firstInput, err := reader.ReadString('\n')
+		if err != nil {
+			color.Red("Error reading input: %v", err)
+			return
+		}
+
+		query := strings.TrimSpace(firstInput)
+		if query == "" {
+			color.Yellow("Please provide a task description (or type 'exit').")
+			fmt.Print("> ")
+			continue
+		}
+		if shouldExit(query) || strings.EqualFold(query, "/exit") || strings.EqualFold(query, "/q") || strings.EqualFold(query, "/e") {
+			color.Cyan("Exiting DCE.\n")
+			return
+		}
+		if strings.HasPrefix(query, "/") {
+			color.Yellow("DCE isn't active yet. Enter a task description to start, or type 'exit'.")
+			color.Yellow("Tip: once active, use /t, /a <desc>, /help, /exit, /bg.\n")
+			fmt.Print("> ")
+			continue
+		}
+
+		task = query
+		break
 	}
 
-	query := strings.TrimSpace(firstInput)
-	if query == "" || query == "exit" || query == "q" {
-		color.Red("No input provided. Exiting DCE.")
-		return
-	}
-
-	// Activate DCE with the initial task
-	if err := dceInstance.Activate(query); err != nil {
+	if err := dceInstance.Activate(task); err != nil {
 		color.Red("Error activating DCE: %v", err)
 		return
 	}
 
-	// Get the conversation ID from the DCE context
-	var conversationID string
-	dce.GetDCEContextManager().ForEachContext(func(cid string, _ *dce.LittleGuy) {
-		conversationID = cid
-	})
+	after := snapshotDCEContextIDs()
+	conversationID := findNewDCEContextID(before, after)
+
+	if conversationID == "" {
+		dce.GetDCEContextManager().ForEachContext(func(cid string, _ *dce.LittleGuy) {
+			if conversationID == "" {
+				conversationID = cid
+			}
+		})
+	}
 
 	if conversationID == "" {
 		color.Red("Failed to get conversation ID")
 		return
 	}
 
-	// Interactive loop
-	color.Green("DCE is active. Type your queries or DCE commands (/task, /status, etc.)")
+	color.Green("DCE is active. Type your queries or DCE commands (/t, /a, /status, /help, /exit).")
+
 	for {
 		color.Green("You:")
 		fmt.Print("> ")
 
-		input, err := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			color.Red("Error reading input: %v", err)
 			break
 		}
 
-		input = strings.TrimSpace(input)
-		if input == "exit" || input == "q" {
-			break
-		}
-
-		// Check if it's a DCE command
-		littleguy, _ := dce.GetDCEContextManager().GetContext(conversationID)
-		if littleguy != nil && dce.HandleDCECommandMenu(input, littleguy) {
+		input := strings.TrimSpace(line)
+		if input == "" {
 			continue
 		}
 
-		// Process as regular query
-		response, err := llm.HandleDCERequest(conversationID, input)
+		// Plain exits
+		if shouldExit(input) {
+			break
+		}
+
+		// Slash exits / background controls
+		lower := strings.ToLower(input)
+		if lower == "/exit" || lower == "/q" || lower == "/e" {
+			break
+		}
+		if lower == "/bg" || lower == "/suspend" {
+			// Leave interactive DCE mode but keep monitoring running.
+			color.Cyan("Leaving DCE session. Monitoring remains ACTIVE in background.\n")
+			return
+		}
+
+		// Handle any other slash command via DCE command menu.
+		if strings.HasPrefix(input, "/") {
+			littleguy, _ := dce.GetDCEContextManager().GetContext(conversationID)
+			if littleguy != nil && dce.HandleDCECommandMenu(input, littleguy) {
+				continue
+			}
+			color.Yellow("[!] DCE context not found; cannot execute command. Type 'exit' to leave.")
+			continue
+		}
+
+		// Regular query: talk to assistant (no DCE re-activation).
+		response, err := llm.HandleQuickAssist(conversationID, input)
 		if err != nil {
 			color.Red("Error processing request: %v", err)
 			continue
@@ -258,9 +300,30 @@ func handleDCECommand() {
 		fmt.Println(response)
 	}
 
-	// Deactivate DCE
-	dceInstance.Deactivate(conversationID)
+	// Best-effort stop monitoring when explicitly exiting.
+	if lg, ok := dce.GetDCEContextManager().GetContext(conversationID); ok && lg != nil {
+		lg.StopMonitoring()
+	}
+
+	_ = dceInstance.Deactivate(conversationID)
 	color.Cyan("DCE deactivated. Exiting.")
+}
+
+func snapshotDCEContextIDs() map[string]struct{} {
+	ids := make(map[string]struct{})
+	dce.GetDCEContextManager().ForEachContext(func(cid string, _ *dce.LittleGuy) {
+		ids[cid] = struct{}{}
+	})
+	return ids
+}
+
+func findNewDCEContextID(before, after map[string]struct{}) string {
+	for cid := range after {
+		if _, existed := before[cid]; !existed {
+			return cid
+		}
+	}
+	return ""
 }
 
 func handleMapCommand() {
