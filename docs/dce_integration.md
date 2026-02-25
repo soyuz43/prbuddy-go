@@ -81,3 +81,17 @@ graph TD
     class C2,D2,E2,F2,G2 path2;
     class C3,D3,H3,F3,G3,I3 path3;
 ```
+
+
+## Function Extraction
+
+The DCE uses Tree-sitter for accurate Go function extraction. 
+
+**Limitations**:
+- Go files only (`.go` extension)
+- Requires valid Go syntax (parse errors = empty function list)
+- First run parses entire repo (subsequent runs benefit from caching)
+
+**Path Normalization**:
+Tree-sitter may return absolute paths while git returns relative paths.
+The `normalizeFilePath()` function handles this automatically.
