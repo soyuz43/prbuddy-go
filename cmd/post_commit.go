@@ -51,23 +51,54 @@ func init() {
 	postCommitCmd.Flags().BoolVar(&createPR, "create-pr", true, "Attempt to create a PR via gh after generating draft")
 	rootCmd.AddCommand(postCommitCmd)
 }
-
 func runPostCommit(cmd *cobra.Command, args []string) {
+	// Post-commit entrypoint.
+	// Do nothing if there is nothing new to summarize.
+
 	if !nonInteractive {
 		fmt.Println("[PRBuddy-Go] Starting post-commit workflow...")
 	}
 
+	// Gate early. Avoid LLM calls when branch is not ahead of upstream.
+	branchName, err := utils.ExecGit("rev-parse", "--abbrev-ref", "HEAD")
+	if err == nil {
+		branchName = strings.TrimSpace(branchName)
+	}
+
+	// Detached HEAD or unknown branch. Continue best-effort.
+	if branchName != "" && branchName != "HEAD" {
+		// If upstream is configured and we are not ahead, skip.
+		// This prevents re-generating from stale diffs (e.g., HEAD~1..HEAD) on a synced branch.
+		upstream, upErr := utils.ExecGit("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+		if upErr == nil {
+			upstream = strings.TrimSpace(upstream)
+
+			// Ahead commits count: upstream..HEAD
+			aheadStr, aErr := utils.ExecGit("rev-list", "--count", upstream+"..HEAD")
+			if aErr == nil {
+				aheadStr = strings.TrimSpace(aheadStr)
+
+				// Only hard-skip on default-ish branches.
+				// Conservative: main/master only.
+				if (branchName == "main" || branchName == "master") && aheadStr == "0" {
+					fmt.Println("[PRBuddy-Go] No changes detected. PR not created.")
+					return
+				}
+			}
+		}
+	}
+
+	// Generate draft (LLM).
 	branchName, commitHash, draftPR, err := generateDraftPR()
 	if err != nil {
 		handleGenerationError(err)
 		return
 	}
 
-	// Clean up LLM formatting for storage/gh
-	cleanDraft := utils.StripOuterMarkdownCodeFence(draftPR)
-	cleanDraft = strings.TrimSpace(cleanDraft)
+	// Clean for storage/gh.
+	cleanDraft := strings.TrimSpace(utils.StripOuterMarkdownCodeFence(draftPR))
 
-	// Save logs + draft.md first (even if extension/gh fails)
+	// Persist first. Extension/gh is best-effort.
 	logDir, logErr := saveConversationLogs(branchName, commitHash, cleanDraft)
 	if logErr != nil {
 		fmt.Printf("[PRBuddy-Go] Logging error: %v\n", logErr)
@@ -79,8 +110,7 @@ func runPostCommit(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Output strategy: extension-first if enabled; otherwise terminal.
-	// Avoid double-printing.
+	// Output once.
 	if extensionActive {
 		if commErr := communicateWithExtension(branchName, commitHash, cleanDraft); commErr != nil {
 			handleExtensionFailure(cleanDraft, commErr)
@@ -89,26 +119,26 @@ func runPostCommit(cmd *cobra.Command, args []string) {
 		presentTerminalOutput(cleanDraft)
 	}
 
-	// Try to create PR (never fail the hook)
+	// PR creation is optional. Never fail the hook.
 	if createPR && logDir != "" {
 		draftPath := filepath.Join(logDir, "draft.md")
 
+		// Title selection.
 		title := utils.ExtractPRTitleFromMarkdown(cleanDraft)
 		if title == "" {
-			// fallback: commit first line
 			title = fallbackTitleFromCommit(commitHash)
 			if title == "" {
 				title = fmt.Sprintf("PRBuddy Draft (%s)", commitHash[:7])
 			}
 		}
 
+		// Base branch detection.
 		base, baseErr := detectBaseBranch()
-		if baseErr != nil {
-			// Not fatal — we can still try gh without base, but it’s safer to provide one.
-			// Prefer a safe default.
+		if baseErr != nil || base == "" {
 			base = "main"
 		}
 
+		// Preflight gh.
 		if ok, whyNot := shouldCreatePRWithGH(); !ok {
 			fmt.Printf("[PRBuddy-Go] Skipping gh PR create: %s\n", whyNot)
 		} else {
