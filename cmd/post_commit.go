@@ -7,11 +7,11 @@
 package cmd
 
 import (
-	"context" // Added missing import for context
+	"context"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec" // Added missing import for exec
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -101,6 +101,7 @@ func runPostCommit(cmd *cobra.Command, args []string) {
 	} else if !nonInteractive {
 		fmt.Printf("[PRBuddy-Go] Draft saved to: %s\n",
 			filepath.Join(logDir, "draft.md"))
+		fmt.Println("[PRBuddy-Go] Run 'prbuddy-go pr create' to create the GitHub PR")
 	}
 }
 
@@ -123,7 +124,7 @@ func draftAlreadyExists(branch, headHash string) bool {
 		utils.FileExists(filepath.Join(logDir, "conversation.json"))
 }
 
-// Generate draft PR (properly without unused parameters)
+// Generate draft PR
 func generateDraftPR() (string, error) {
 	// Get commit message and diffs
 	commitMessage, diffs, err := llm.GeneratePreDraftPR()
@@ -136,7 +137,7 @@ func generateDraftPR() (string, error) {
 		return "", fmt.Errorf("no detectable changes")
 	}
 
-	// Generate draft with ONLY the parameters the function actually accepts
+	// Generate draft
 	draftPR, err := llm.GenerateDraftPR(commitMessage, diffs)
 	if err != nil {
 		return "", fmt.Errorf("draft generation failed: %w", err)
