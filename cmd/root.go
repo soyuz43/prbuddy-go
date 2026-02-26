@@ -18,6 +18,11 @@ import (
 	"golang.org/x/text/language"
 )
 
+// Initialize the root command's Run function here to break the initialization cycle
+func init() {
+	rootCmd.Run = runRootCommand
+}
+
 func runRootCommand(cmd *cobra.Command, args []string) {
 	color.Cyan("[PRBuddy-Go] Starting...\n")
 
@@ -44,6 +49,7 @@ func runInteractiveSession() {
 	fmt.Printf("   %s    - %s\n", green("dce"), "Dynamic Context Engine")
 	fmt.Printf("   %s    - %s\n", green("context save"), "Save current conversation context")
 	fmt.Printf("   %s    - %s\n", green("context load"), "Reload saved context for current branch/commit")
+	fmt.Printf("   %s    - %s\n", green("pr create"), "Create PR from saved draft")
 	fmt.Printf("   %s    - %s\n", green("serve"), "Start API server for extension integration")
 	fmt.Printf("   %s    - %s\n", green("map"), "Generate project scaffolds")
 	fmt.Printf("   %s    - %s\n", green("help"), "Show help information")
@@ -65,44 +71,37 @@ func runInteractiveSession() {
 			continue
 		}
 
+		// Handle command shortcuts and aliases
 		command := strings.ToLower(parts[0])
 		args := parts[1:]
 
+		// Map shortcuts to full commands
 		switch command {
-		case "generate", "gen", "pr":
-			handleGeneratePR()
-		case "what", "w", "changes":
-			handleWhatChanged()
-		case "quickassist", "qa":
-			handleQuickAssist(args, reader)
-		case "dce":
-			handleDCECommand()
-		case "serve", "s":
-			handleServeCommand()
-		case "map":
-			handleMapCommand()
-		case "context":
-			if len(args) < 1 {
-				color.Red("Usage: context [save|load]")
-				continue
-			}
-			switch args[0] {
-			case "save":
-				handleContextSave()
-			case "load":
-				handleContextLoad()
-			default:
-				color.Red("Unknown context subcommand. Use 'save' or 'load'.")
-			}
-		case "help", "h":
-			printInteractiveHelp()
-		case "remove", "uninstall":
-			handleRemoveCommand()
-		case "exit", "e", "quit", "q":
-			color.Cyan("Exiting...\n")
-			return
-		default:
-			color.Red("Unknown command. Type 'help' for available commands.\n")
+		case "g", "gen":
+			command = "generate"
+		case "w", "changes":
+			command = "what"
+		case "q", "qa":
+			command = "quickassist"
+		case "s":
+			command = "serve"
+		case "p":
+			command = "pr"
+		}
+
+		// Properly find and execute the Cobra command
+		cmd, _, err := rootCmd.Find(append([]string{command}, args...))
+		if err != nil {
+			color.Red("[PRBuddy-Go] Unknown command: '%s'\n", strings.Join(parts, " "))
+			continue
+		}
+
+		// Set args for the command
+		cmd.SetArgs(args)
+
+		// Execute the command through Cobra's proper flow
+		if err := cmd.Execute(); err != nil {
+			color.Red("[PRBuddy-Go] Error: %v\n", err)
 		}
 	}
 }
@@ -114,7 +113,7 @@ func handleGeneratePR() {
 
 func handleWhatChanged() {
 	color.Cyan("\n[PRBuddy-Go] Checking changes...\n")
-	whatCmd.Run(nil, nil)
+	// This is no longer used directly - handled through Cobra execution
 }
 
 func handleQuickAssist(args []string, reader *bufio.Reader) {
@@ -430,6 +429,7 @@ func printInteractiveHelp() {
 	fmt.Println(bold("\nPull Request Workflow"))
 	fmt.Printf("   %s    - %s\n", green("generate pr"), "Draft a new pull request with AI assistance")
 	fmt.Printf("   %s    - %s\n", green("what changed"), "Show changes since your last commit")
+	fmt.Printf("   %s    - %s\n", green("pr create"), "Create PR from saved draft")
 
 	fmt.Println(bold("\nAssistant Tools"))
 	fmt.Printf("   %s    - %s\n", green("quickassist"), "Chat live with the assistant (no memory)")
