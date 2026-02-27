@@ -1,4 +1,4 @@
-module github.com/soyuz43/prbuddy-go
+module github.com/soyuz43/PRbuddy
 
 go 1.23.5
 
